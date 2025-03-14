@@ -1,0 +1,42 @@
+listeners:
+  # each CV is controlled via a float in the 0-1 range
+  # each of these can be set with a single Float32 value
+  - topic: /europi/cv1
+    type: std_msgs/msg/Float32
+    osc_address: /europi/cv1
+    host: 192.168.4.1
+    port: 9000
+  - topic: /europi/cv2
+    type: std_msgs/msg/Float32
+    osc_address: /europi/cv2
+    host: 192.168.4.1
+    port: 9000
+  - topic: /europi/cv3
+    type: std_msgs/msg/Float32
+    osc_address: /europi/cv3
+    host: 192.168.4.1
+    port: 9000
+  - topic: /europi/cv4
+    type: std_msgs/msg/Float32
+    osc_address: /europi/cv4
+    host: 192.168.4.1
+    port: 9000
+  - topic: /europi/cv5
+    type: std_msgs/msg/Float32
+    osc_address: /europi/cv5
+    host: 192.168.4.1
+    port: 9000
+  - topic: /europi/cv6
+    type: std_msgs/msg/Float32
+    osc_address: /europi/cv6
+    host: 192.168.4.1
+    port: 9000
+
+  # EuroPi also accepts a six-field message to set all CVs at once
+  # this must be represented as a raw OSC message, as it contains multiple
+  # values in the payload
+  - topic: /europi/cvs
+    type: open_sound_control_msgs/msg/OscMessage
+    osc_address: /europi/cvs
+    host: 192.168.4.1
+    port: 9000
