@@ -196,3 +196,19 @@ listeners:
 If unspecified, any subscriber using `std_msgs/msg/String` will output `s` (OSC string)
 packets and any subscriber using `std_msgs/msg/Empty` will output `N` (OSC null)
 packets.
+
+## Building
+
+To build from source, clone this repository and use `colcon`. This package has been tested
+on Ubuntu 24.04 with ROS 2 Jazzy. Other distributions may be compatible, but are not
+officially supported.
+
+```bash
+source /opt/ros/jazzy/setup.bash
+mkdir -p colcon_ws/src
+cd colcon_ws/src
+git clone http://github.com/chrisib/open_sound_control_ros.git
+cd ..
+rosdep install --from-paths src --ignore-src -r -y
+colcon build
+```
