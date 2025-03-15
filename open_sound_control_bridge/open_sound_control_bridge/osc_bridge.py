@@ -51,7 +51,7 @@ def main():
         default=default_cfg,
         help=f'Path to the OSC bridge configuration file (default: {default_cfg})',
     )
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()
 
     rclpy.init()
     node = OscBridgeNode(args.config, args.port)

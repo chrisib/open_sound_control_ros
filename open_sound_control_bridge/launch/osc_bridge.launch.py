@@ -41,7 +41,7 @@ def generate_launch_description():
 
     osc_bridge_node = Node(
         package='open_sound_control_bridge',
-        executable='osc_bridge',
+        executable='osc_bridge_node',
         name='osc_bridge',
         output='screen',
         arguments=[
