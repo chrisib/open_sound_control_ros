@@ -1,13 +1,13 @@
 # Required OSC 1.1 types:
-string BLOB = "b"     # byte array of length N, where N is represented as a 32-bit integer in the first 4 bytes
 string FLOAT = "f"    # IEEE float32
-string FALSE = "F"    # boolean False; no bytes allocated in payload
 string INTEGER = "i"  # signed 32-bit integer (most significant byte first)
+string BLOB = "b"     # byte array of length N, where N is represented as a 32-bit integer in the first 4 bytes
+string STRING = "s"   # null-terminated string of 8-bit chars
+string TIMETAG = "t"  # 64-bit OSC timetag in NTP format
 string IMPULSE = "I"  # impulse/trigger; no bytes allocated in payload
 string NIL = "N"      # null; no bytes allocated in payload
-string STRING = "s"   # null-terminated string of 8-bit chars
-string TIMETAG = "t"  # OSC timetag in NTP format
-string TRUE = "T"     # boolean True; no bytes allocated in payload
+string B_TRUE = "T"   # boolean True; no bytes allocated in payload
+string B_FALSE = "F"  # boolean False; no bytes allocated in payload
 
 
 # Optional additional types

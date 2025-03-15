@@ -152,3 +152,47 @@ listeners:
     host: 192.168.4.1
     port: 9000
 ```
+
+Note that some ROS types are re-used for multiple OSC message types. To specify the desired
+OSC type for outgoing OSC packets, add the `osc_type` parameter to the listener:
+
+```yaml
+listeners:
+  # 3 types use std_msgs/String subscribers
+  - topic: /osc/my_string
+    type: std_msgs/msg/String
+    osc_address: /osc_string
+    osc_type: s
+    host: 10.0.0.101
+    port: 8000
+  - topic: /osc/my_symbols
+    type: std_msgs/msg/String
+    osc_address: /osc_symbol
+    osc_type: S
+    host: 10.0.0.101
+    port: 8000
+  - topic: /osc/my_char
+    type: std_msgs/msg/String
+    osc_address: /osc_char
+    osc_type: c
+    host: 10.0.0.101
+    port: 8000
+
+  # 2 types use std_msgs/Empty subscribers
+  - topic: /osc/my_trigger
+    type: std_msgs/msg/Empty
+    osc_address: /osc_trigger
+    osc_type: I
+    host: 10.0.0.101
+    port: 8000
+  - topic: /osc/my_null
+    type: std_msgs/msg/Empty
+    osc_address: /osc_null
+    osc_type: N
+    host: 10.0.0.101
+    port: 8000
+```
+
+If unspecified, any subscriber using `std_msgs/msg/String` will output `s` (OSC string)
+packets and any subscriber using `std_msgs/msg/Empty` will output `N` (OSC null)
+packets.
