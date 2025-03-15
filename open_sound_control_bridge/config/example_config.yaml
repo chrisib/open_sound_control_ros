@@ -1,0 +1,6 @@
+listeners:
+  - topic: /osc/frequency
+    type: std_msgs/msg/Float32
+    osc_address: /osc/frequency
+    host: 127.0.0.1
+    port: 9000
