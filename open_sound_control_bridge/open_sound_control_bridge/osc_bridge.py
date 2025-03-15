@@ -289,7 +289,7 @@ class OscBridgeNode(Node):
             socket.IPPROTO_UDP,
         )
         self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.udp_socket.settimeout(0)
+        self.udp_socket.settimeout(1)
         addr = socket.getaddrinfo("0.0.0.0", self.udp_port)[0][-1]
         self.udp_socket.bind(addr)
 
@@ -354,7 +354,7 @@ class OscBridgeNode(Node):
                 msg = self.osc2ros(data)
                 self.raw_publisher.publish(msg)
             except ValueError as err:
-                pass
+                self.get_logger().warning(f'Rejected packet: {err}')
             except OSError as err:
                 pass
             except Exception as err:
@@ -389,6 +389,14 @@ class OscBridgeNode(Node):
         type_start = osc_packet.index(b',', address_end)
         type_end = osc_packet.index(b'\0', type_start)
         data_start = align_next_word(type_end)
+
+        # fill in the raw packet
+        for i in range(type_start+1, type_end):
+            msg.types.append(chr(osc_packet[i]))
+        d = data_start
+        while d < len(osc_packet):
+            msg.payload.append(osc_packet[d])
+            d += 1
 
         i = type_start + 1
         d = data_start

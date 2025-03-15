@@ -30,7 +30,7 @@ string address
 # The OSC v1.1 compatible list of types in the payload
 # Each character in the string indicates a specific type
 # See type definitions above
-string types
+string[] types
 
 # The payload bytes
 # Each variable in the payload is word-aligned, meaning there
