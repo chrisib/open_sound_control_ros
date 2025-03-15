@@ -34,6 +34,7 @@ from std_msgs.msg import (
     String,
 )
 import struct
+import threading
 import yaml
 
 
@@ -282,9 +283,33 @@ class OscBridgeNode(Node):
 
         self.parse_config()
 
+        self.udp_socket = socket.socket(
+            socket.AF_INET,
+            socket.SOCK_DGRAM,
+            socket.IPPROTO_UDP,
+        )
+        self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.udp_socket.settimeout(0)
+        addr = socket.getaddrinfo("0.0.0.0", self.udp_port)[0][-1]
+        self.udp_socket.bind(addr)
+
+        # keep a dictionary of OSC -> ROS republishers keyed by their ROS topic name
+        self.publishers = {}
+
+        self.is_alive = True
+        self.socket_thread = threading.Thread(
+            target=self.read_socket
+        )
+        self.socket_thread.start()
+
+    def shutdown(self, *, context=None):
+        self.is_alive = False
+        self.socket_thread.join()
+        super().shutdown(context=context)
+
     def parse_config(self) -> None:
-        #"""Read the configuration file & create the ROS topic subscribers"""
-        #try:
+        """Read the configuration file & create the ROS topic subscribers"""
+        try:
             with open(self.config_path, 'r') as yaml_in:
                 cfg = yaml.load(yaml_in, yaml.SafeLoader)
             listeners = cfg.get('listeners', [])
@@ -314,8 +339,137 @@ class OscBridgeNode(Node):
                 except KeyError as err:
                     self.get_logger().warning(f'Failed to create subscriber: missing config key "{err}". Skipping.')
 
-        #except Exception as err:
-        #    self.get_logger().error(f'Failed to read config file {self.config_path}: {err}')
+        except Exception as err:
+            self.get_logger().error(f'Failed to read config file {self.config_path}: {err}')
+
+    def read_socket(self):
+        while self.is_alive:
+            try:
+                (data, connection) = self.udp_socket.recvfrom(1024)
+                msg = self.osc2ros(data)
+            except ValueError as err:
+                pass
+            except OSError as err:
+                pass
+            except Exception as err:
+                self.get_logger().warning(f'Failed to process packet: {err}')
+
+    def osc2ros(self, osc_packet: bytes) -> open_sound_control_msgs.msg.OscMessage:
+        """
+        Convert a raw OSC packet into its equivalent ROS message
+
+        @param osc_packet  The raw byte data received from the socket
+        """
+        def align_next_word(n):
+            """
+            Return the index of the next word-alined byte
+
+            We assume 4-byte/32-bit words. If we're already word-aligned,
+            we increment to the next one
+
+            @param n  The current index in a byte array
+
+            @exception ValueError of the packet contains data we don't support
+            """
+            return n + (4 - (n % 4)) % 4
+
+        msg = OscMessage()
+
+        address_end = osc_packet.index(b'\0', 0)
+        msg.address = osc_packet[0:address_end].decode('utf-8')
+        if msg.address.endswith("/"):
+            msg.address = msg.address.rstrip("/")
+
+        type_start = osc_packet.index(b',', address_end)
+        type_end = osc_packet.index(b'\0', type_start)
+        data_start = align_next_word(type_end)
+
+        i = type_start + 1
+        d = data_start
+
+        topic_counters = {
+            OscMessage.FLOAT: 0,
+            OscMessage.INTEGER: 0,
+            OscMessage.BLOB: 0,
+            OscMessage.STRING: 0,
+            OscMessage.TIMETAG: 0,
+            OscMessage.IMPULSE: 0,
+            OscMessage.NIL: 0,
+            OscMessage.B_TRUE: 0,
+            OscMessage.B_FALSE: 0,
+            OscMessage.CHAR: 0,
+            OscMessage.DOUBLE: 0,
+            OscMessage.MIDI: 0,
+            OscMessage.RGBA: 0,
+            OscMessage.SYMBOLS: 0,
+        }
+        while i < type_end and d < len(osc_packet):
+            t = chr(osc_packet[i])
+
+            ros_type = None
+            ros_topic = None
+            ros_value = None
+
+            # Numerical types
+            if t == OscMessage.INTEGER:
+                ros_type = Int32
+                ros_topic = f'{msg.address}/int_{topic_counters[t]}'
+                ros_value = Int32()
+                ros_value.data = (
+                    (osc_packet[d] << 24) |
+                    (osc_packet[d + 1] << 16) |
+                    (osc_packet[d + 2] << 8) |
+                    osc_packet[d + 3]
+                )
+                d += 4
+            elif t == OscMessage.FLOAT:
+                ros_type = Float32
+                ros_topic = f'{msg.address}/float_{topic_counters[t]}'
+                ros_value = Float32()
+                ros_value = data = struct.unpack('>f', osc_packet[d:d+4])[0]
+                d += 4
+            elif t == OscMessage.DOUBLE:
+                ros_type = Float64
+                ros_topic = f'{msg.address}/double_{topic_counters[t]}'
+                ros_value = Float64()
+                ros_value = data = struct.unpack('>d', osc_packet[d:d+8])[0]
+                d += 8
+
+            # string types
+            elif t == OscMessage.STRING:
+                pass
+            elif t == OscMessage.SYMBOLS:
+                pass
+            elif t == OscMessage.CHAR:
+                pass
+
+            # misc payloads
+            elif t == OscMessage.BLOB:
+                pass
+            elif t == OscMessage.TIMETAG:
+                pass
+            elif t == OscMessage.MIDI:
+                pass
+            elif t == OscMessage.RGBA:
+                pass
+            elif t == OscMessage.BLOB:
+                pass
+
+            # non-payload types
+            elif t == OscMessage.IMPULSE:
+                pass
+            elif t == OscMessage.NIL:
+                pass
+            elif t == OscMessage.B_TRUE or t == OscMessage.B_FALSE:
+                pass
+
+            # unsupported types
+            elif t == OscMessage.ARR_START or t == OscMessage.ARR_STOP:
+                raise ValueError('open_sound_control_bridge does not support OSC arrays')
+
+            topic_counters[t] += 1
+
+        return msg
 
 
 def main():
