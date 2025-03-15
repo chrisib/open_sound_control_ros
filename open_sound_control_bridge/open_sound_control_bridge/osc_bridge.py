@@ -12,16 +12,20 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-from ament_index_python.packages import get_package_share_directory
 import argparse
 import datetime
 import importlib
+import socket
+import struct
+import threading
+
+from ament_index_python.packages import get_package_share_directory
+
 from open_sound_control_msgs.msg import OscBlob, OscMessage
+
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-import socket
 from std_msgs.msg import (
     Bool,
     ByteMultiArray,
@@ -33,33 +37,30 @@ from std_msgs.msg import (
     Int32,
     String,
 )
-import struct
-import threading
 import yaml
 
-
 epoch_ref = datetime.datetime(
-    year = 1970,
-    month = 1,
-    day = 1,
-    hour = 0,
-    minute = 0,
-    second = 0
+    year=1970,
+    month=1,
+    day=1,
+    hour=0,
+    minute=0,
+    second=0
 )
 
 ntp_ref = datetime.datetime(
-    year = 1900,
-    month = 1,
-    day = 1,
-    hour = 0,
-    minute = 0,
-    second = 0
+    year=1900,
+    month=1,
+    day=1,
+    hour=0,
+    minute=0,
+    second=0
 )
 
 
 def ros_time_2_ntp_time(ros_time: rclpy.time.Time) -> float:
     """
-    Convert a ROS timestamp (linux epoch time) to NTP time
+    Convert a ROS timestamp (linux epoch time) to NTP time.
 
     @param ros_time The ROS timestamp to convert
     @return  The elapsed seconds since 1 Jan 1900 00:00:00
@@ -74,7 +75,7 @@ def ros_time_2_ntp_time(ros_time: rclpy.time.Time) -> float:
 
 def ntp_time_2_ros_time(ntp_time: float) -> rclpy.time.Time:
     """
-    Convert an NTP timestamp to a ROS timestamp
+    Convert an NTP timestamp to a ROS timestamp.
 
     @param ntp_time  The number of seconds elapsed since Jan 1, 1900 00:00:00
     """
@@ -82,13 +83,13 @@ def ntp_time_2_ros_time(ntp_time: float) -> rclpy.time.Time:
     now = ntp_ref + ntp_delta
     epoch_delta = now - epoch_ref
     return rclpy.time.Time(
-        nanoseconds = epoch_delta.total_seconds() * 1000000000
+        nanoseconds=epoch_delta.total_seconds() * 1000000000
     )
 
 
 class Ros2OscRelay:
     """
-    Helper class that converts ROS data to OSC data
+    Helper class that converts ROS data to OSC data.
 
     The OscBridgeNode creates one of these for every listener topic defined in the config
     """
@@ -104,7 +105,7 @@ class Ros2OscRelay:
         osc_type: str = None,
     ):
         """
-        Create the ROS to OSC relay
+        Create the ROS to OSC relay.
 
         @param node  The ROS node that owns this relay
         @param ros_topic  The ROS topic we're subscribing to
@@ -152,7 +153,7 @@ class Ros2OscRelay:
 
     def ros_callback(self, data):
         """
-        Callback function for receiving data on our ROS topic
+        Process the incoming ROS message & republish it as an OSC message.
 
         We convert the ROS data to its equivalent OSC packet and send it over
         our UDP socket to the specified destination. This being UDP there's no
@@ -165,9 +166,7 @@ class Ros2OscRelay:
         t = type(data)
 
         def word_align(arr):
-            """
-            Pad osc_data with extra null characters so it's 32-bit aligned
-            """
+            """Pad osc_data with extra null characters so it's 32-bit aligned."""
             for i in range((4 - (len(arr) % 4)) % 4):
                 arr.append(0)
 
@@ -271,6 +270,7 @@ class Ros2OscRelay:
         msg = bytearray(osc_header)
         self.udp_socket.sendto(msg, (self.dest_ip, self.udp_port))
 
+
 class OscBridgeNode(Node):
     def __init__(
         self,
@@ -290,7 +290,7 @@ class OscBridgeNode(Node):
         )
         self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.udp_socket.settimeout(1)
-        addr = socket.getaddrinfo("0.0.0.0", self.udp_port)[0][-1]
+        addr = socket.getaddrinfo('0.0.0.0', self.udp_port)[0][-1]
         self.udp_socket.bind(addr)
 
         # keep a dictionary of OSC -> ROS republishers keyed by their ROS topic name
@@ -313,20 +313,20 @@ class OscBridgeNode(Node):
         super().shutdown(context=context)
 
     def parse_config(self) -> None:
-        """Read the configuration file & create the ROS topic subscribers"""
+        """Read the configuration file & create the ROS topic subscribers."""
         try:
             with open(self.config_path, 'r') as yaml_in:
                 cfg = yaml.load(yaml_in, yaml.SafeLoader)
             listeners = cfg.get('listeners', [])
 
             self.ros_to_osc_subs = []
-            for l in listeners:
-                tstring = l['type']
+            for listener in listeners:
+                tstring = listener['type']
                 parts = tstring.split('/')
                 module = f'{parts[0]}.{parts[1]}'
                 msg_name = parts[2]
                 msg_type = getattr(importlib.import_module(module), msg_name)
-                topic = l['topic']
+                topic = listener['topic']
                 self.get_logger().info(
                     f'Creating subscriber {topic} ({msg_type})'
                 )
@@ -335,14 +335,14 @@ class OscBridgeNode(Node):
                         self,
                         topic,
                         msg_type,
-                        l['osc_address'],
-                        l['host'],
-                        l['port'],
-                        osc_type=l.get('osc_type', None),
+                        listener['osc_address'],
+                        listener['host'],
+                        listener['port'],
+                        osc_type=listener.get('osc_type', None),
                     )
                     self.ros_to_osc_subs.append(sub)
                 except KeyError as err:
-                    self.get_logger().warning(f'Failed to create subscriber: missing config key "{err}". Skipping.')
+                    self.get_logger().warning(f'Failed to create subscriber: missing config key "{err}". Skipping.')  # noqa: E501
 
         except Exception as err:
             self.get_logger().error(f'Failed to read config file {self.config_path}: {err}')
@@ -355,20 +355,20 @@ class OscBridgeNode(Node):
                 self.raw_publisher.publish(msg)
             except ValueError as err:
                 self.get_logger().warning(f'Rejected packet: {err}')
-            except OSError as err:
+            except OSError:
                 pass
             except Exception as err:
                 self.get_logger().warning(f'Failed to process packet: {err}')
 
     def osc2ros(self, osc_packet: bytes) -> OscMessage:
         """
-        Convert a raw OSC packet into its equivalent ROS message
+        Convert a raw OSC packet into its equivalent ROS message.
 
         @param osc_packet  The raw byte data received from the socket
         """
         def align_next_word(n):
             """
-            Return the index of the next word-alined byte
+            Return the index of the next word-alined byte.
 
             We assume 4-byte/32-bit words. If we're already word-aligned,
             we increment to the next one
@@ -383,8 +383,8 @@ class OscBridgeNode(Node):
 
         address_end = osc_packet.index(b'\0', 0)
         msg.address = osc_packet[0:address_end].decode('utf-8')
-        if msg.address.endswith("/"):
-            msg.address = msg.address.rstrip("/")
+        if msg.address.endswith('/'):
+            msg.address = msg.address.rstrip('/')
 
         type_start = osc_packet.index(b',', address_end)
         type_end = osc_packet.index(b'\0', type_start)
@@ -542,7 +542,7 @@ class OscBridgeNode(Node):
             elif t == OscMessage.B_TRUE or t == OscMessage.B_FALSE:
                 ros_type = Bool
                 # use a shared counter for both T and F
-                ros_topic = f'{msg.address}/bool_{topic_counters['T_F']}'
+                ros_topic = f'{msg.address}/bool_{topic_counters["T_F"]}'
                 ros_value = Bool()
                 if t == OscMessage.B_TRUE:
                     ros_value.data = True
@@ -572,7 +572,7 @@ class OscBridgeNode(Node):
 
     def sanitize_ros_topic(self, t: str):
         """
-        Sanitize the generated ROS topic
+        Sanitize the generated ROS topic.
 
         OSC allows leading integers, non-letter characters, etc... that are not compatible
         with ROS.
@@ -601,9 +601,8 @@ class OscBridgeNode(Node):
         return '/'.join(ns)
 
 
-
 def main():
-    default_cfg = f'{get_package_share_directory("open_sound_control_bridge")}/config/example_config.yaml'
+    default_cfg = f'{get_package_share_directory("open_sound_control_bridge")}/config/example_config.yaml'  # noqa: E501
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
