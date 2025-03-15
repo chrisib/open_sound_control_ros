@@ -294,7 +294,12 @@ class OscBridgeNode(Node):
         self.udp_socket.bind(addr)
 
         # keep a dictionary of OSC -> ROS republishers keyed by their ROS topic name
-        self.publishers = {}
+        self.osc_to_ros_pubs = {}
+        self.raw_publisher = self.create_publisher(
+            OscMessage,
+            'osc_raw',
+            qos_profile_sensor_data
+        )
 
         self.is_alive = True
         self.socket_thread = threading.Thread(
@@ -345,8 +350,9 @@ class OscBridgeNode(Node):
     def read_socket(self):
         while self.is_alive:
             try:
-                (data, connection) = self.udp_socket.recvfrom(1024)
+                (data, _) = self.udp_socket.recvfrom(4096)
                 msg = self.osc2ros(data)
+                self.raw_publisher.publish(msg)
             except ValueError as err:
                 pass
             except OSError as err:
@@ -354,7 +360,7 @@ class OscBridgeNode(Node):
             except Exception as err:
                 self.get_logger().warning(f'Failed to process packet: {err}')
 
-    def osc2ros(self, osc_packet: bytes) -> open_sound_control_msgs.msg.OscMessage:
+    def osc2ros(self, osc_packet: bytes) -> OscMessage:
         """
         Convert a raw OSC packet into its equivalent ROS message
 
@@ -395,8 +401,7 @@ class OscBridgeNode(Node):
             OscMessage.TIMETAG: 0,
             OscMessage.IMPULSE: 0,
             OscMessage.NIL: 0,
-            OscMessage.B_TRUE: 0,
-            OscMessage.B_FALSE: 0,
+            'T_F': 0,  # shared counter for T and F values
             OscMessage.CHAR: 0,
             OscMessage.DOUBLE: 0,
             OscMessage.MIDI: 0,
@@ -405,6 +410,7 @@ class OscBridgeNode(Node):
         }
         while i < type_end and d < len(osc_packet):
             t = chr(osc_packet[i])
+            i += 1
 
             ros_type = None
             ros_topic = None
@@ -426,48 +432,131 @@ class OscBridgeNode(Node):
                 ros_type = Float32
                 ros_topic = f'{msg.address}/float_{topic_counters[t]}'
                 ros_value = Float32()
-                ros_value = data = struct.unpack('>f', osc_packet[d:d+4])[0]
+                ros_value.data = struct.unpack('>f', osc_packet[d:d+4])[0]
                 d += 4
             elif t == OscMessage.DOUBLE:
                 ros_type = Float64
                 ros_topic = f'{msg.address}/double_{topic_counters[t]}'
                 ros_value = Float64()
-                ros_value = data = struct.unpack('>d', osc_packet[d:d+8])[0]
+                ros_value.data = struct.unpack('>d', osc_packet[d:d+8])[0]
                 d += 8
 
             # string types
             elif t == OscMessage.STRING:
-                pass
+                ros_type = String
+                ros_topic = f'{msg.address}/string_{topic_counters[t]}'
+                ros_value = String()
+                str_end = osc_packet.index(b'\0', d)
+                ros_value.data = osc_packet[d:str_end].decode('utf-8')
+                d = align_next_word(str_end)
             elif t == OscMessage.SYMBOLS:
-                pass
+                ros_type = String
+                ros_topic = f'{msg.address}/symbol_{topic_counters[t]}'
+                ros_value = String()
+                str_end = osc_packet.index(b'\0', d)
+                ros_value.data = osc_packet[d:str_end].decode('utf-8')
+                d = align_next_word(str_end)
             elif t == OscMessage.CHAR:
-                pass
+                ros_type = String
+                ros_topic = f'{msg.address}/char_{topic_counters[t]}'
+                ros_value = String()
+                # char data is in the least significant byte of the 32-bit word
+                ros_value.data = chr(osc_packet[d + 3])
+                d += 4
 
             # misc payloads
             elif t == OscMessage.BLOB:
-                pass
+                ros_type = OscBlob
+                ros_topic = f'{msg.address}/blob_{topic_counters[t]}'
+                ros_value = OscBlob()
+                n = (
+                    (osc_packet[d] << 24) |
+                    (osc_packet[d + 1] << 16) |
+                    (osc_packet[d + 2] << 8) |
+                    osc_packet[d + 3]
+                )
+                d += 4
+                ros_value.data = []
+                for j in range(n):
+                    ros_value.data.append(osc_packet[d + j])
+                d += n
+                d = align_next_word(d)
             elif t == OscMessage.TIMETAG:
-                pass
+                s = (
+                    (osc_packet[d] << 24) |
+                    (osc_packet[d + 1] << 16) |
+                    (osc_packet[d + 2] << 8) |
+                    osc_packet[d + 3]
+                )
+                sub_s = (
+                    (osc_packet[d + 4] << 24) |
+                    (osc_packet[d + 5] << 16) |
+                    (osc_packet[d + 6] << 8) |
+                    osc_packet[d + 7]
+                )
+                time = s + sub_s / (2 ** 32 - 1)
+
+                ros_type = Header
+                ros_topic = f'{msg.address}/time_{topic_counters[t]}'
+                ros_value = Header()
+                ros_value.stamp = ntp_time_2_ros_time(time).to_msg()
+                d += 8
             elif t == OscMessage.MIDI:
-                pass
+                ros_type = ByteMultiArray
+                ros_topic = f'{msg.address}/midi_{topic_counters[t]}'
+                ros_value = ByteMultiArray()
+                ros_value.data = [
+                    osc_packet[d],
+                    osc_packet[d + 1],
+                    osc_packet[d + 2],
+                    osc_packet[d + 3],
+                ]
+                d += 4
             elif t == OscMessage.RGBA:
-                pass
-            elif t == OscMessage.BLOB:
-                pass
+                ros_type = ColorRGBA
+                ros_topic = f'{msg.address}/rgba_{topic_counters[t]}'
+                ros_value = ColorRGBA()
+                ros_value.r = osc_packet[d] / 255
+                ros_value.g = osc_packet[d + 1] / 255
+                ros_value.b = osc_packet[d + 2] / 255
+                ros_value.a = osc_packet[d + 3] / 255
+                d += 4
 
             # non-payload types
             elif t == OscMessage.IMPULSE:
-                pass
+                ros_type = Empty
+                ros_topic = f'{msg.address}/trig_{topic_counters[t]}'
+                ros_value = Empty()
             elif t == OscMessage.NIL:
-                pass
+                ros_type = Empty
+                ros_topic = f'{msg.address}/null_{topic_counters[t]}'
+                ros_value = Empty()
             elif t == OscMessage.B_TRUE or t == OscMessage.B_FALSE:
-                pass
+                ros_type = Bool
+                # use a shared counter for both T and F
+                ros_topic = f'{msg.address}/bool_{topic_counters['T_F']}'
+                ros_value = Bool()
+                if t == OscMessage.B_TRUE:
+                    ros_value.data = True
+                else:
+                    ros_value.data = False
+                t = 'T_F'  # hack so the counter increment below works properly
 
             # unsupported types
             elif t == OscMessage.ARR_START or t == OscMessage.ARR_STOP:
                 raise ValueError('open_sound_control_bridge does not support OSC arrays')
 
             topic_counters[t] += 1
+
+            if ros_topic not in self.osc_to_ros_pubs.keys():
+                pub = self.create_publisher(
+                    ros_type,
+                    ros_topic,
+                    qos_profile_sensor_data
+                )
+                self.osc_to_ros_pubs[ros_topic] = pub
+
+            self.osc_to_ros_pubs[ros_topic].publish(ros_value)
 
         return msg
 
