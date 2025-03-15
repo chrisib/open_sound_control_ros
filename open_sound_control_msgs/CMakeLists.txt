@@ -17,7 +17,7 @@ find_package(rosidl_default_generators REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   msg/OscBlob.msg
   msg/OscMessage.msg
-  DEPENDENCIES std_msgs builtin_interfaces
+  DEPENDENCIES builtin_interfaces
 )
 
 ament_export_dependencies(rosidl_default_runtime)
