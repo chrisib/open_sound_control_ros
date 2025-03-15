@@ -89,6 +89,22 @@ where `_N` is a 0-based index indicating the relative order of variables of that
 To configure ROS -> OSC conversions, the bridge node must be properly configured.
 See [bridge configuration](#bridge-configuration), below.
 
+### OSC address and ROS topic naming standards
+
+OSC does not strictly enforce many standards on the address. ROS topic namespaces on
+the other hand follow stricter conventions:
+- topic names may only contain lower-case letters, numbers, and underscore (`_`) characters
+- no portion of the namespace may have a leading integer
+- leading `_` characters cause the ROS topic to become hidden
+
+When generating the ROS topic name from the OSC address, the following modifications will
+occur if necessary, to ensure compliance with ROS:
+1. all letters are converted to lower-case. e.g. `/Frequency` becomes `/frequency`
+2. if any portion of the namespace starts with a number, the prefix `osc_` is added.
+   e.g. the OSC address `/1_frequency` would be converted to `/osc_1_frequency`
+3. if the OSC address includes a trailing `/`, it is removed
+4. if the OSC address omits the leading `/`, it is added
+
 ## Bridge configuration
 
 The `open_sound_control_bridge` node uses a YAML file to configure ROS topic subscribers
