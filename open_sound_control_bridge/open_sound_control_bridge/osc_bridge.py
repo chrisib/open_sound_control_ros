@@ -556,6 +556,8 @@ class OscBridgeNode(Node):
 
             topic_counters[t] += 1
 
+            ros_topic = self.sanitize_ros_topic(ros_topic)
+
             if ros_topic not in self.osc_to_ros_pubs.keys():
                 pub = self.create_publisher(
                     ros_type,
@@ -567,6 +569,37 @@ class OscBridgeNode(Node):
             self.osc_to_ros_pubs[ros_topic].publish(ros_value)
 
         return msg
+
+    def sanitize_ros_topic(self, t: str):
+        """
+        Sanitize the generated ROS topic
+
+        OSC allows leading integers, non-letter characters, etc... that are not compatible
+        with ROS.
+
+        @param t  The ROS topic generated from the OSC address
+        """
+        namespaces = t.split('/')
+        ns = []
+        for n in namespaces:
+            # remove non-alphanumeric characters, make everything lower-case
+            s = ''
+            for ch in n:
+                ch = ch.lower()
+                if not ch.isalnum():
+                    ch = '_'
+                s += ch
+
+            if len(s) > 0:
+                # ROS doesn't allow leading integers, so add an `osc_` prefix
+                # if necessary; adding `_` alone would result in a hidden topic,
+                # which we probably don't want
+                if s[0] >= '0' and s[0] <= '9':
+                    s = f'osc_{s}'
+                ns.append(s)
+
+        return '/'.join(ns)
+
 
 
 def main():
