@@ -228,3 +228,20 @@ cd ..
 rosdep install --from-paths src --ignore-src -r -y
 colcon build
 ```
+
+## Running `open_sound_control_bridge`
+
+The `open_sound_control_bridge` package can be run either directly with `ros2 run`:
+```bash
+ros2 run open_sound_control_bridge osc_bridge_node --port UDP_PORT --config /path/to/bridge_config.yaml
+```
+or via the provided launch file:
+```bash
+ros2 launch open_sound_control_bridge osc_bridge.launch.py port:=UDP_PORT osc_config:=/path/to_bridge_config.yaml
+```
+
+The `osc_bridge_node` will listen for OSC packets from any source on the specified UDP port, republishing them
+as ROS topics.
+
+Outbound OSC packets are send to the specified host on the UDP ports defined in the
+[bridge configuration file](#bridge-configuration).
