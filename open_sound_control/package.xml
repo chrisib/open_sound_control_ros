@@ -4,7 +4,7 @@
   <name>open_sound_control</name>
   <version>0.0.1</version>
   <description>Metapackage for ROS/Open Sound Control bridge</description>
-  <license>BSD</license>
+  <license>Apache 2.0</license>
 
   <maintainer email="ve4cib@gmail.com">Chris Iverach-Brereton</maintainer>
 
