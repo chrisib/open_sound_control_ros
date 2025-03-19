@@ -18,15 +18,13 @@ import socket
 import struct
 import threading
 
+from ament_index_python.packages import get_package_share_directory
 from open_sound_control_bridge.ntp_utils import (
     ntp_time_2_ros_time,
 )
 from open_sound_control_bridge.relay import (
     Ros2OscRelay
 )
-
-from ament_index_python.packages import get_package_share_directory
-
 from open_sound_control_msgs.msg import OscBlob, OscMessage
 
 import rclpy
@@ -61,11 +59,12 @@ class OscBridgeNode(Node):
     :param udp_port:  The UDP port we accept incoming OSC packets on
     :param static_bridge:  Do we operate in dynamic or static mode
     """
+
     def __init__(
         self,
         config_path: str,
-        udp_port: int=9000,
-        static_bridge: bool=False,
+        udp_port: int = 9000,
+        static_bridge: bool = False,
     ):
         super().__init__('osc_bridge_node')
         self.config_path = config_path
@@ -107,9 +106,9 @@ class OscBridgeNode(Node):
         self.socket_thread.join()
         super().shutdown(context=context)
 
-    def str2msg(self, typestr: str) -> type:
+    def str2msg(self, typestr: str):
         """
-        Convert a ROS type name to its actual type
+        Convert a ROS type name to its actual type.
 
         :param typestr: The ROS name of the message, e.g 'std_msgs/msg/String'
         :return: The type, or None if the type could not be parsed
@@ -160,7 +159,7 @@ class OscBridgeNode(Node):
                 except KeyError as err:
                     self.get_logger().warning(f'Failed to create subscriber: missing config key "{err}". Skipping.')  # noqa: E501
                 except ValueError as err:
-                        self.get_logger().warning(f'Failed to create subscriber: {err}. Skipping.')
+                    self.get_logger().warning(f'Failed to create subscriber: {err}. Skipping.')
 
             if self.static_mode:
                 for publisher in osc2ros:
@@ -234,7 +233,7 @@ class OscBridgeNode(Node):
 
         # if we're in static mode and we don't know about this topic, kick out now;
         # there's no need to process the whole packet
-        if self.static_mode and not msg.address in self.osc_to_ros_pubs.keys():
+        if self.static_mode and msg.address not in self.osc_to_ros_pubs.keys():
             self.get_logger().warning(f'Unknown OSC address: {msg.address}')
             return None
 
@@ -424,7 +423,7 @@ class OscBridgeNode(Node):
                 # if the OSC message has an unexpected type, the publish might fail
                 pub.publish(ros_value)
             except Exception as err:
-                self.get_logger().debug('Failed to publish OSC->ROS message: {err}')
+                self.get_logger().debug(f'Failed to publish OSC->ROS message: {err}')
 
             # if we're in static mode, kick out; we only support 1 type per packet
             if self.static_mode:

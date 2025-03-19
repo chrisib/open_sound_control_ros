@@ -19,8 +19,6 @@ from open_sound_control_bridge.ntp_utils import (
     ros_time_2_ntp_time,
 )
 
-from ament_index_python.packages import get_package_share_directory
-
 from open_sound_control_msgs.msg import OscBlob, OscMessage
 
 import rclpy
