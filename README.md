@@ -111,12 +111,19 @@ The `open_sound_control_bridge` node uses a YAML file to configure ROS topic sub
 and OSC destinations.
 
 ```yaml
-listeners:
-  - topic: /my_ros/topic
-    type: my_ros_msgs/msg/Type
-    osc_address: /my_osc/topic
+topics_ros2osc:
+  - topic: /my_ros/topic_pub
+    type: std_msgs/msg/Type
+    osc_address: /my_osc/inbound_address
     host: <ip address of destination device>
     port: <UDP port destination accepts messages on>
+  - ...
+
+topics_osc2ros:
+  - topic: /my_ros/topic_sub
+    type: std_msgs/msg/Type
+    osc_address: /my_osc/outbound_address
+  - ...
 ```
 
 The ROS types in the table above + `osc_control_messages/msg/OscMessage` are allowed
@@ -125,7 +132,7 @@ types; all other types are rejected.
 For example, the following would be a valid configuration to control a
 [EuroPi](https://github.com/allen-synthesis/europi) eurorack module:
 ```yaml
-listeners:
+topics_ros2osc:
   # each CV is controlled via a float in the 0-1 range
   # each of these can be set with a single Float32 value
   - topic: /europi/cv1
@@ -167,6 +174,24 @@ listeners:
     osc_address: /europi/cvs
     host: 192.168.4.1
     port: 9000
+
+# These are ignored if we enable the dynamic bridge mode
+topics_osc2ros:
+  # EuroPi publishes the knob and button states as OSC addresses
+  # Buttons are published as OSC integers (1.0 compatibility)
+  - topic: /europi/k1
+    type: std_msgs/msg/Float32
+    osc_address: /europi/k1
+  - topic: /europi/k2
+    type: std_msgs/msg/Float32
+    osc_address: /europi/k2
+  - topic: /europi/b1
+    type: std_msgs/msg/Int32
+    osc_address: /europi/b1
+  - topic: /europi/b2
+    type: std_msgs/msg/Int32
+    osc_address: /europi/b2
+
 ```
 
 Note that some ROS types are re-used for multiple OSC message types. To specify the desired
@@ -213,6 +238,24 @@ If unspecified, any subscriber using `std_msgs/msg/String` will output `s` (OSC 
 packets and any subscriber using `std_msgs/msg/Empty` will output `N` (OSC null)
 packets.
 
+### Dynamic vs Static Bridge
+
+The bridge can operate in two modes: static and dynamic.
+
+In either mode, the `topics_ros2osc` must be set in the configuration, and only these
+topics will relay from ROS to OSC.
+
+In dynamic mode, ROS publishers are dynamically created, with the ROS topic names described
+earlier (including the trailing `_N`).
+
+In static mode, the `topics_osc2ros` must be defined. Only OSC messages whose addresses
+correspond to those specified in the configuration file will be republished as ROS topics.
+OSC messages with other addresses are silently ignored.
+
+Static mode only relays the _first_ item from any given OSC payload. All other items are
+ignored (though they are available in the `osc_raw` topic).
+
+
 ## Building
 
 To build from source, clone this repository and use `colcon`. This package has been tested
@@ -233,15 +276,11 @@ colcon build
 
 The `open_sound_control_bridge` package can be run either directly with `ros2 run`:
 ```bash
-ros2 run open_sound_control_bridge osc_bridge_node --port UDP_PORT --config /path/to/bridge_config.yaml
+ros2 run open_sound_control_bridge osc_bridge_node --port UDP_PORT --config /path/to/bridge_config.yaml [--static]
 ```
-or via the provided launch file:
+or via the provided launch files:
 ```bash
-ros2 launch open_sound_control_bridge osc_bridge.launch.py port:=UDP_PORT osc_config:=/path/to_bridge_config.yaml
+ros2 launch open_sound_control_bridge dynamic_bridge.launch.py port:=UDP_PORT osc_config:=/path/to_bridge_config.yaml
+
+ros2 launch open_sound_control_bridge static_bridge.launch.py port:=UDP_PORT osc_config:=/path/to_bridge_config.yaml
 ```
-
-The `osc_bridge_node` will listen for OSC packets from any source on the specified UDP port, republishing them
-as ROS topics.
-
-Outbound OSC packets are send to the specified host on the UDP ports defined in the
-[bridge configuration file](#bridge-configuration).

@@ -24,7 +24,7 @@ from launch_ros.actions import Node
 ARGUMENTS = [
     DeclareLaunchArgument(
         'osc_config',
-        default_value=f'{get_package_share_directory("open_sound_control_bridge")}/config/example_config.yaml',  # noqa: E501
+        default_value=f'{get_package_share_directory("open_sound_control_bridge")}/config/europi_config.yaml',  # noqa: E501
         description='Path to the OSC bridge configuration file',
     ),
     DeclareLaunchArgument(
@@ -48,8 +48,9 @@ def generate_launch_description():
             '--config',
             config_file,
             '--port',
-            port
-        ]
+            port,
+            '--static',
+        ],
     )
 
     # Create launch description and add actions

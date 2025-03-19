@@ -1,4 +1,4 @@
-listeners:
+topics_ros2osc:
   # each CV is controlled via a float in the 0-1 range
   # each of these can be set with a single Float32 value
   - topic: /europi/cv1
@@ -40,3 +40,20 @@ listeners:
     osc_address: /europi/cvs
     host: 192.168.4.1
     port: 9000
+
+# These are ignored if we enable the dynamic bridge mode
+topics_osc2ros:
+  # EuroPi publishes the knob and button states as OSC addresses
+  # Buttons are published as OSC integers (1.0 compatibility)
+  - topic: /europi/k1
+    type: std_msgs/msg/Float32
+    osc_address: /europi/k1
+  - topic: /europi/k2
+    type: std_msgs/msg/Float32
+    osc_address: /europi/k2
+  - topic: /europi/b1
+    type: std_msgs/msg/Int32
+    osc_address: /europi/b1
+  - topic: /europi/b2
+    type: std_msgs/msg/Int32
+    osc_address: /europi/b2

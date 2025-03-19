@@ -13,17 +13,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import argparse
-import datetime
 import importlib
 import socket
 import struct
 import threading
+
+from open_sound_control_bridge.ntp_utils import (
+    ntp_time_2_ros_time,
+)
+from open_sound_control_bridge.relay import (
+    Ros2OscRelay
+)
 
 from ament_index_python.packages import get_package_share_directory
 
 from open_sound_control_msgs.msg import OscBlob, OscMessage
 
 import rclpy
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import (
@@ -39,248 +46,38 @@ from std_msgs.msg import (
 )
 import yaml
 
-epoch_ref = datetime.datetime(
-    year=1970,
-    month=1,
-    day=1,
-    hour=0,
-    minute=0,
-    second=0
-)
-
-ntp_ref = datetime.datetime(
-    year=1900,
-    month=1,
-    day=1,
-    hour=0,
-    minute=0,
-    second=0
-)
-
-
-def ros_time_2_ntp_time(ros_time: rclpy.time.Time) -> float:
-    """
-    Convert a ROS timestamp (linux epoch time) to NTP time.
-
-    @param ros_time The ROS timestamp to convert
-    @return  The elapsed seconds since 1 Jan 1900 00:00:00
-    """
-    s, ns = ros_time.seconds_nanoseconds()
-    epoch_delta = datetime.timedelta(
-        seconds=(s + ns / 1000000000)
-    )
-    ntp_delta = (epoch_ref + epoch_delta) - ntp_ref
-    return ntp_delta.total_seconds()
-
-
-def ntp_time_2_ros_time(ntp_time: float) -> rclpy.time.Time:
-    """
-    Convert an NTP timestamp to a ROS timestamp.
-
-    @param ntp_time  The number of seconds elapsed since Jan 1, 1900 00:00:00
-    """
-    ntp_delta = datetime.timedelta(seconds=ntp_time)
-    now = ntp_ref + ntp_delta
-    epoch_delta = now - epoch_ref
-    return rclpy.time.Time(
-        nanoseconds=epoch_delta.total_seconds() * 1000000000
-    )
-
-
-class Ros2OscRelay:
-    """
-    Helper class that converts ROS data to OSC data.
-
-    The OscBridgeNode creates one of these for every listener topic defined in the config
-    """
-
-    def __init__(
-        self,
-        node: rclpy.node.Node,
-        ros_topic: str,
-        ros_type: any,
-        osc_address: str,
-        dest_ip: str,
-        udp_port: int,
-        osc_type: str = None,
-    ):
-        """
-        Create the ROS to OSC relay.
-
-        @param node  The ROS node that owns this relay
-        @param ros_topic  The ROS topic we're subscribing to
-        @param ros_type  The ROS message type for the subscription
-        @param osc_address  The OSC address we forward messages as
-        @param dest_ip  The IP address of the OSC client we're sending data to
-        @param udp_port  The UDP port we send the OSC packet on
-        @param osc_type  Optional parameter to disambiguate between multiple OSC types
-                         that translate to the same ROS type
-                         (e.g. std_msgs/String, std_msgs/Empty)
-
-        @exception ValueError if the specified osc_type is not compatible with the given
-                   ROS type
-        """
-        self.node = node
-        self.dest_ip = dest_ip
-        self.udp_port = udp_port
-        self.osc_address = osc_address
-        self.osc_type = osc_type
-
-        # sanity check that the osc_type is valid for our ROS type
-        if osc_type is not None:
-            if not (
-                (osc_type == 'N' and ros_type is Empty) or
-                (osc_type == 'I' and ros_type is Empty) or
-                (osc_type == 's' and ros_type is String) or
-                (osc_type == 'S' and ros_type is String) or
-                (osc_type == 'c' and ros_type is String)
-            ):
-                raise ValueError(f'OSC type {osc_type} is not compatible with ROS type {ros_type}')
-
-        self.udp_socket = socket.socket(
-            socket.AF_INET,
-            socket.SOCK_DGRAM,
-            socket.IPPROTO_UDP,
-        )
-        self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
-        self.sub = node.create_subscription(
-            ros_type,
-            ros_topic,
-            self.ros_callback,
-            qos_profile_sensor_data
-        )
-
-    def ros_callback(self, data):
-        """
-        Process the incoming ROS message & republish it as an OSC message.
-
-        We convert the ROS data to its equivalent OSC packet and send it over
-        our UDP socket to the specified destination. This being UDP there's no
-        handshaking to make sure it was received; we just fire & forget.
-
-        @param data  The ROS message we've received
-        """
-        osc_header = []
-        osc_payload = []
-        t = type(data)
-
-        def word_align(arr):
-            """Pad osc_data with extra null characters so it's 32-bit aligned."""
-            for i in range((4 - (len(arr) % 4)) % 4):
-                arr.append(0)
-
-        # 1. the OSC address
-        if t is OscMessage:
-            # use the address in the message instead of our static one
-            for ch in data.address:
-                osc_header.append(ord(ch))
-        else:
-            for ch in self.osc_address:
-                osc_header.append(ord(ch))
-        osc_header.append(0)
-        osc_header.append(ord(','))
-        word_align(osc_header)
-
-        # 2. the type & payload
-        if t is Bool:
-            # Booleans have no payload data
-            if data.data:
-                osc_header.append(ord(OscMessage.B_TRUE))
-            else:
-                osc_header.append(ord(OscMessage.B_FALSE))
-        elif t is Empty:
-            # empty can be a trigger or null
-            # neither has any payload
-            if self.osc_type is None:
-                osc_header.append(ord(OscMessage.NIL))
-            else:
-                osc_header.append(self.osc_type)
-        elif t is ByteMultiArray:
-            # 4-byte MIDI data
-            osc_header.append(ord(OscMessage.MIDI))
-            for i in range(4):
-                osc_payload.append(data.data[i])
-        elif t is ColorRGBA:
-            osc_header.append(ord(OscMessage.RGBA))
-            # ROS uses 0-1, OSC uses 0-255
-            osc_payload.append(int(data.r * 255))
-            osc_payload.append(int(data.g * 255))
-            osc_payload.append(int(data.b * 255))
-            osc_payload.append(int(data.a * 255))
-        elif t is Float32:
-            osc_header.append(ord(OscMessage.FLOAT))
-            fbytes = struct.pack('>f', data.data)
-            for b in fbytes:
-                osc_payload.append(b)
-        elif t is Float64:
-            osc_header.append(ord(OscMessage.DOUBLE))
-            fbytes = struct.pack('>d', data.data)
-            for b in fbytes:
-                osc_payload.append(b)
-        elif t is Header:
-            # OSC timestamps are a 64-bit fixed-point value
-            # the first 32 bits are the seconds elapsed since 1 Jan 1900 00:00:00
-            # the second 32 bits are the fractional parts of a second
-            osc_header.append(ord(OscMessage.TIMETAG))
-            t = ros_time_2_ntp_time(t.stamp)
-            s = int(t)
-            sub_s = t - s
-            fix = int(sub_s * 2**32 - 1)
-            osc_payload.append((s >> 24) & 0xFF)
-            osc_payload.append((s >> 16) & 0xFF)
-            osc_payload.append((s >> 8) & 0xFF)
-            osc_payload.append(s & 0xFF)
-            osc_payload.append((fix >> 24) & 0xFF)
-            osc_payload.append((fix >> 16) & 0xFF)
-            osc_payload.append((fix >> 8) & 0xFF)
-            osc_payload.append(fix & 0xFF)
-        elif t is Int32:
-            osc_header.append(ord(OscMessage.INTEGER))
-            osc_payload.append((data.data >> 24) & 0xFF)
-            osc_payload.append((data.data >> 16) & 0xFF)
-            osc_payload.append((data.data >> 8) & 0xFF)
-            osc_payload.append(data.data & 0xFF)
-        elif t is String:
-            osc_header.append(ord(OscMessage.STRING))
-            for ch in data.data:
-                osc_payload.append(ord(ch))
-            osc_payload.append(0)
-            word_align(osc_payload)
-        elif t is OscBlob:
-            # OSC blob data
-            osc_header.append(ord(OscMessage.BLOB))
-            # data length
-            osc_payload.append((len(data.data) >> 24) & 0xFF)
-            osc_payload.append((len(data.data) >> 16) & 0xFF)
-            osc_payload.append((len(data.data) >> 8) & 0xFF)
-            osc_payload.append(len(data.data) & 0xFF)
-            for byte in data.data:
-                osc_payload.append(byte)
-            word_align(osc_payload)
-        elif t is OscMessage:
-            for ch in data.types:
-                osc_header.append(ord(ch))
-            for b in data.payload:
-                osc_payload.append(b)
-
-        for b in osc_payload:
-            osc_header.append(b)
-
-        msg = bytearray(osc_header)
-        self.udp_socket.sendto(msg, (self.dest_ip, self.udp_port))
-
 
 class OscBridgeNode(Node):
+    """
+    The main interface class between OSC and ROS.
+
+    In dynamic mode, every incoming OSC packet will generate a corresponding ROS
+    publisher.
+
+    In static mode, we pre-configure the available topics and only ever publish
+    on those
+
+    :param config_path:  The path to the configuration file with incoming & outgoing topics
+    :param udp_port:  The UDP port we accept incoming OSC packets on
+    :param static_bridge:  Do we operate in dynamic or static mode
+    """
     def __init__(
         self,
         config_path: str,
-        udp_port: int,
+        udp_port: int=9000,
+        static_bridge: bool=False,
     ):
         super().__init__('osc_bridge_node')
         self.config_path = config_path
         self.udp_port = udp_port
 
+        # keep a dictionary of OSC -> ROS republishers keyed by their OSC address
+        self.osc_to_ros_pubs = {}
+
+        # keep a list of all ROS -> OSC relay objects
+        self.ros_to_osc_relays = []
+
+        self.static_mode = static_bridge
         self.parse_config()
 
         self.udp_socket = socket.socket(
@@ -293,8 +90,6 @@ class OscBridgeNode(Node):
         addr = socket.getaddrinfo('0.0.0.0', self.udp_port)[0][-1]
         self.udp_socket.bind(addr)
 
-        # keep a dictionary of OSC -> ROS republishers keyed by their ROS topic name
-        self.osc_to_ros_pubs = {}
         self.raw_publisher = self.create_publisher(
             OscMessage,
             'osc_raw',
@@ -312,37 +107,85 @@ class OscBridgeNode(Node):
         self.socket_thread.join()
         super().shutdown(context=context)
 
+    def str2msg(self, typestr: str) -> type:
+        """
+        Convert a ROS type name to its actual type
+
+        :param typestr: The ROS name of the message, e.g 'std_msgs/msg/String'
+        :return: The type, or None if the type could not be parsed
+        """
+        try:
+            parts = typestr.split('/')
+            module = '.'.join(parts[0:-1])
+            msg_name = parts[-1]
+            return getattr(importlib.import_module(module), msg_name)
+        except Exception as err:
+            self.get_logger().warning(f'Failed to find type for "{typestr}": {err}')
+            return None
+
     def parse_config(self) -> None:
         """Read the configuration file & create the ROS topic subscribers."""
         try:
             with open(self.config_path, 'r') as yaml_in:
                 cfg = yaml.load(yaml_in, yaml.SafeLoader)
-            listeners = cfg.get('listeners', [])
+            ros2osc = cfg.get('topics_ros2osc', [])
+            osc2ros = cfg.get('topics_osc2ros', [])
 
-            self.ros_to_osc_subs = []
-            for listener in listeners:
-                tstring = listener['type']
-                parts = tstring.split('/')
-                module = f'{parts[0]}.{parts[1]}'
-                msg_name = parts[2]
-                msg_type = getattr(importlib.import_module(module), msg_name)
-                topic = listener['topic']
-                self.get_logger().info(
-                    f'Creating subscriber {topic} ({msg_type})'
-                )
+            for listener in ros2osc:
                 try:
+                    tstring = listener['type']
+                    msg_type = self.str2msg(tstring)
+
+                    if msg_type is None:
+                        raise ValueError(f'Unknown ROS type: {tstring}')
+
+                    topic = listener['topic']
+                    osc_address = listener['osc_address']
+                    host = listener['host']
+                    port = listener['port']
+                    self.get_logger().info(
+                        f'Bridge ROS->OSC :: {topic} ({tstring}) -> {osc_address} @ {host}:{port}'
+                    )
+
                     sub = Ros2OscRelay(
                         self,
                         topic,
                         msg_type,
-                        listener['osc_address'],
-                        listener['host'],
-                        listener['port'],
+                        osc_address,
+                        host,
+                        port,
                         osc_type=listener.get('osc_type', None),
                     )
-                    self.ros_to_osc_subs.append(sub)
+                    self.ros_to_osc_relays.append(sub)
                 except KeyError as err:
                     self.get_logger().warning(f'Failed to create subscriber: missing config key "{err}". Skipping.')  # noqa: E501
+                except ValueError as err:
+                        self.get_logger().warning(f'Failed to create subscriber: {err}. Skipping.')
+
+            if self.static_mode:
+                for publisher in osc2ros:
+                    try:
+                        tstring = publisher['type']
+                        msg_type = self.str2msg(tstring)
+
+                        if msg_type is None:
+                            raise ValueError(f'Unknown ROS type: {tstring}')
+
+                        topic = publisher['topic']
+                        osc_address = publisher['osc_address']
+                        self.get_logger().info(
+                            f'Bridge OSC->ROS :: {osc_address} -> {topic} ({tstring})'
+                        )
+                        pub = self.create_publisher(
+                            msg_type,
+                            topic,
+                            qos_profile_sensor_data,
+                        )
+                        self.osc_to_ros_pubs[osc_address] = pub
+                    except KeyError as err:
+                        self.get_logger().warning(f'Failed to create publisher: missing config key "{err}". Skipping.')  # noqa: E501
+                    except ValueError as err:
+                        self.get_logger().warning(f'Failed to create publisher: {err}. Skipping.')
 
         except Exception as err:
             self.get_logger().error(f'Failed to read config file {self.config_path}: {err}')
@@ -352,7 +195,8 @@ class OscBridgeNode(Node):
             try:
                 (data, _) = self.udp_socket.recvfrom(4096)
                 msg = self.osc2ros(data)
-                self.raw_publisher.publish(msg)
+                if msg is not None:
+                    self.raw_publisher.publish(msg)
             except ValueError as err:
                 self.get_logger().warning(f'Rejected packet: {err}')
             except OSError:
@@ -364,7 +208,9 @@ class OscBridgeNode(Node):
         """
         Convert a raw OSC packet into its equivalent ROS message.
 
-        @param osc_packet  The raw byte data received from the socket
+        :param osc_packet:  The raw byte data received from the socket
+        :return: The raw OSC message to be sent on the osc_raw topic, or None
+            if we're in static mode and the OSC address wasn't predefined
         """
         def align_next_word(n):
             """
@@ -373,9 +219,9 @@ class OscBridgeNode(Node):
             We assume 4-byte/32-bit words. If we're already word-aligned,
             we increment to the next one
 
-            @param n  The current index in a byte array
+            :param n:  The current index in a byte array
 
-            @exception ValueError of the packet contains data we don't support
+            :raises ValueError: of the packet contains data we don't support
             """
             return n + (4 - (n % 4)) % 4
 
@@ -385,6 +231,12 @@ class OscBridgeNode(Node):
         msg.address = osc_packet[0:address_end].decode('utf-8')
         if msg.address.endswith('/'):
             msg.address = msg.address.rstrip('/')
+
+        # if we're in static mode and we don't know about this topic, kick out now;
+        # there's no need to process the whole packet
+        if self.static_mode and not msg.address in self.osc_to_ros_pubs.keys():
+            self.get_logger().warning(f'Unknown OSC address: {msg.address}')
+            return None
 
         type_start = osc_packet.index(b',', address_end)
         type_end = osc_packet.index(b'\0', type_start)
@@ -558,15 +410,25 @@ class OscBridgeNode(Node):
 
             ros_topic = self.sanitize_ros_topic(ros_topic)
 
-            if ros_topic not in self.osc_to_ros_pubs.keys():
-                pub = self.create_publisher(
+            # if we're here it's either because we're in dynamic mode or the address is known
+            # no need to handle static mode as that's taken care of earlier
+            if msg.address not in self.osc_to_ros_pubs.keys():
+                self.osc_to_ros_pubs[msg.address] = self.create_publisher(
                     ros_type,
                     ros_topic,
-                    qos_profile_sensor_data
+                    qos_profile_sensor_data,
                 )
-                self.osc_to_ros_pubs[ros_topic] = pub
 
-            self.osc_to_ros_pubs[ros_topic].publish(ros_value)
+            pub = self.osc_to_ros_pubs[msg.address]
+            try:
+                # if the OSC message has an unexpected type, the publish might fail
+                pub.publish(ros_value)
+            except Exception as err:
+                self.get_logger().debug('Failed to publish OSC->ROS message: {err}')
+
+            # if we're in static mode, kick out; we only support 1 type per packet
+            if self.static_mode:
+                break
 
         return msg
 
@@ -577,7 +439,7 @@ class OscBridgeNode(Node):
         OSC allows leading integers, non-letter characters, etc... that are not compatible
         with ROS.
 
-        @param t  The ROS topic generated from the OSC address
+        :param t:  The ROS topic generated from the OSC address
         """
         namespaces = t.split('/')
         ns = []
@@ -623,11 +485,23 @@ def main():
         default=default_cfg,
         help=f'Path to the OSC bridge configuration file (default: {default_cfg})',
     )
+    parser.add_argument(
+        '-s',
+        '--static',
+        action='store_true',
+        dest='static_bridge',
+        help='Enable static OSC to ROS topics; only topics in the config file will be bridged',
+    )
     args, _ = parser.parse_known_args()
 
     rclpy.init()
-    node = OscBridgeNode(args.config, args.port)
-    rclpy.spin(node)
+    executor = MultiThreadedExecutor()
+    node = OscBridgeNode(
+        args.config,
+        udp_port=args.port,
+        static_bridge=args.static_bridge
+    )
+    rclpy.spin(node, executor=executor)
     rclpy.shutdown()
 
 
