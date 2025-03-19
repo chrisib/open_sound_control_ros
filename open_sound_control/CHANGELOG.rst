@@ -2,8 +2,8 @@
 Changelog for package open_sound_control
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+0.0.2 (2025-03-19)
+------------------
 * Fix license for metapackage
 * Contributors: Chris I-B
 
